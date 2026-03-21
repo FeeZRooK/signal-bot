@@ -1,9 +1,12 @@
 const axios = require('axios');
 
-const BASE_URL = 'https://fapi.binance.com';
+// Переводим сервис на Spot API.
+// Официальные публичные market-data эндпоинты Spot:
+// https://api.binance.com/api/v3/...
+const BASE_URL = 'https://api.binance.com';
 
-async function getFuturesKlines(symbol, interval = '5m', limit = 100) {
-  const res = await axios.get(`${BASE_URL}/fapi/v1/klines`, {
+async function getSpotKlines(symbol, interval = '5m', limit = 100) {
+  const res = await axios.get(`${BASE_URL}/api/v3/klines`, {
     params: { symbol, interval, limit },
     timeout: 15000,
   });
@@ -23,26 +26,29 @@ async function getFuturesKlines(symbol, interval = '5m', limit = 100) {
   }));
 }
 
+// Оставляю старое имя функции, чтобы не ломать остальной код проекта.
+// Но фактически теперь она возвращает spot klines, а не futures.
+async function getFuturesKlines(symbol, interval = '5m', limit = 100) {
+  return getSpotKlines(symbol, interval, limit);
+}
+
+// Раньше тут был отбор USDT perpetual futures.
+// Теперь делаем ближайший безопасный вариант:
+// берём топ USDT spot-пар по quoteVolume.
 async function getTopUsdtPerpetualSymbolsByVolume(limit = 50) {
   const [exchangeInfoRes, ticker24hRes] = await Promise.all([
-    axios.get(`${BASE_URL}/fapi/v1/exchangeInfo`, { timeout: 15000 }),
-    axios.get(`${BASE_URL}/fapi/v1/ticker/24hr`, { timeout: 15000 }),
+    axios.get(`${BASE_URL}/api/v3/exchangeInfo`, { timeout: 15000 }),
+    axios.get(`${BASE_URL}/api/v3/ticker/24hr`, { timeout: 15000 }),
   ]);
 
-  const activeUsdtPerpetualSet = new Set(
+  const activeUsdtSet = new Set(
     exchangeInfoRes.data.symbols
-      .filter((s) => {
-        return (
-          s.contractType === 'PERPETUAL' &&
-          s.quoteAsset === 'USDT' &&
-          s.status === 'TRADING'
-        );
-      })
+      .filter((s) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
       .map((s) => s.symbol)
   );
 
   const sorted = ticker24hRes.data
-    .filter((t) => activeUsdtPerpetualSet.has(t.symbol))
+    .filter((t) => activeUsdtSet.has(t.symbol))
     .map((t) => ({
       symbol: t.symbol,
       quoteVolume: Number(t.quoteVolume),
@@ -50,7 +56,7 @@ async function getTopUsdtPerpetualSymbolsByVolume(limit = 50) {
     .sort((a, b) => b.quoteVolume - a.quoteVolume)
     .slice(0, limit);
 
-  return sorted;
+  return sorted.map((item) => item.symbol);
 }
 
 module.exports = {
