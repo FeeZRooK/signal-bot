@@ -1,0 +1,18 @@
+import { validateEnv, env } from "./config/env.js";
+import { connectDB } from "./config/db.js";
+import { logger } from "./utils/logger.js";
+
+async function bootstrap() {
+  try {
+    validateEnv();
+    await connectDB();
+
+    logger.info(`Signal bot started on port ${env.port}`);
+    logger.info("Project bootstrapped successfully");
+  } catch (error) {
+    logger.error("Application failed to start:", error.message);
+    process.exit(1);
+  }
+}
+
+bootstrap();
