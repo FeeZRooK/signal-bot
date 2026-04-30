@@ -1,3 +1,4 @@
+const http = require('http');
 const path = require('path');
 
 require('dotenv').config({
@@ -33,6 +34,44 @@ const sentDivergenceSignals = new Map();
 const RSI_PERIOD = 14;
 let top10Logged = false;
 const divergenceTimers = new Map();
+
+
+const healthServerState = {
+  startedAt: new Date().toISOString(),
+  botStarted: false,
+};
+
+function startHealthServer() {
+  const port = Number(process.env.PORT || 3000);
+
+  const server = http.createServer((request, response) => {
+    if (request.url === '/health') {
+      response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({
+        status: 'ok',
+        service: 'signal-bot',
+        botStarted: healthServerState.botStarted,
+        startedAt: healthServerState.startedAt,
+      }));
+      return;
+    }
+
+    if (request.url === '/' || request.url === '/healthz') {
+      response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      response.end('OK');
+      return;
+    }
+
+    response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end('Not Found');
+  });
+
+  server.listen(port, '0.0.0.0', () => {
+    console.log('[health] server listening on port ' + port);
+  });
+
+  return server;
+}
 
 function getDivergenceDedupTtlMs() {
   return env.divergenceDedupTtlHours * 60 * 60 * 1000;
@@ -1104,6 +1143,8 @@ async function debugSignalCandle(symbol, timeframe, closeTimeInput, kind = 'volu
 
 async function start() {
   validateEnv();
+  startHealthServer();
+  healthServerState.botStarted = true;
 
   console.log('[bot] Binance signal bot started');
   console.log(`[telegram] bot token configured: ${env.telegramBotToken ? 'yes' : 'no'}`);
@@ -1115,7 +1156,12 @@ async function start() {
   }, env.divergenceDedupCleanupMinutes * 60 * 1000);
 
   await startDivergenceSchedulers();
-  await runScan();
+
+  try {
+    await runScan();
+  } catch (error) {
+    console.error(`[error] initial scan failed: ${error.message}`);
+  }
 
   setInterval(async () => {
     try {
