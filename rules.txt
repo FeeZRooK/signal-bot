@@ -1,0 +1,20 @@
+стек технологий
+Node.js
+MongoDB
+
+2 бота: топ10 и топ50 по суточному объему торгов
+топ 10 также дает сигналы по дивергенциям на RSI 
+
+условия сигналов
+normal: volume x4, price+0,25%
+strong: volume x8, price+0,5%
+
+RSI: 90 и больше, 10 и меньше
+
+liquidations: если distance <= 2% → OK
+если distance <= 3.5% И strength >= 7 → OK
+иначе → skip
+
+
+
+привлекаем для решения задач Codex

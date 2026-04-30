@@ -1,65 +1,139 @@
 const axios = require('axios');
 
-// Переводим сервис на Spot API.
-// Официальные публичные market-data эндпоинты Spot:
-// https://api.binance.com/api/v3/...
-const BASE_URL = 'https://api.binance.com';
+const BASE_URL = 'https://fapi.binance.com';
+const EXCHANGE_INFO_TTL_MS = 5 * 60 * 1000;
+const exchangeInfoCache = {
+  symbols: null,
+  fetchedAt: 0,
+};
 
-async function getSpotKlines(symbol, interval = '5m', limit = 100) {
-  const res = await axios.get(`${BASE_URL}/api/v3/klines`, {
+async function getExchangeInfo() {
+  const now = Date.now();
+
+  if (
+    exchangeInfoCache.symbols &&
+    now - exchangeInfoCache.fetchedAt < EXCHANGE_INFO_TTL_MS
+  ) {
+    return exchangeInfoCache.symbols;
+  }
+
+  const response = await axios.get(`${BASE_URL}/fapi/v1/exchangeInfo`, {
+    timeout: 15000,
+  });
+
+  exchangeInfoCache.symbols = response.data.symbols;
+  exchangeInfoCache.fetchedAt = now;
+
+  return exchangeInfoCache.symbols;
+}
+
+async function getTickers24h() {
+  const response = await axios.get(`${BASE_URL}/fapi/v1/ticker/24hr`, {
+    timeout: 15000,
+  });
+
+  return response.data;
+}
+
+async function getTopUsdtSymbolsByVolume(limit = 10) {
+  const [symbols, tickers] = await Promise.all([getExchangeInfo(), getTickers24h()]);
+
+  const activeUsdtPairs = new Set(
+    symbols
+      .filter((item) => item.quoteAsset === 'USDT' && item.status === 'TRADING')
+      .filter((item) => item.contractType === 'PERPETUAL')
+      .map((item) => item.symbol)
+  );
+
+  return tickers
+    .filter((item) => activeUsdtPairs.has(item.symbol))
+    .sort((a, b) => Number(b.quoteVolume) - Number(a.quoteVolume))
+    .slice(0, limit)
+    .map((item) => item.symbol);
+}
+
+async function isSymbolTrading(symbol) {
+  const symbols = await getExchangeInfo();
+  const symbolInfo = symbols.find((item) => item.symbol === symbol);
+
+  if (!symbolInfo) {
+    return false;
+  }
+
+  return symbolInfo.status === 'TRADING';
+}
+
+async function getKlines(symbol, interval, limit = 100) {
+  if (!interval) {
+    throw new Error('getKlines interval is required');
+  }
+
+  const response = await axios.get(`${BASE_URL}/fapi/v1/klines`, {
     params: { symbol, interval, limit },
     timeout: 15000,
   });
 
-  return res.data.map((k) => ({
-    openTime: Number(k[0]),
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-    closeTime: Number(k[6]),
-    quoteVolume: Number(k[7]),
-    trades: Number(k[8]),
-    takerBaseVolume: Number(k[9]),
-    takerQuoteVolume: Number(k[10]),
+  return response.data.map((item) => ({
+    openTime: Number(item[0]),
+    open: Number(item[1]),
+    high: Number(item[2]),
+    low: Number(item[3]),
+    close: Number(item[4]),
+    volume: Number(item[5]),
+    closeTime: Number(item[6]),
   }));
 }
 
-// Оставляю старое имя функции, чтобы не ломать остальной код проекта.
-// Но фактически теперь она возвращает spot klines, а не futures.
-async function getFuturesKlines(symbol, interval = '5m', limit = 100) {
-  return getSpotKlines(symbol, interval, limit);
+async function getClosedKlines(symbol, interval, limit = 12) {
+  if (!interval) {
+    throw new Error('getClosedKlines interval is required');
+  }
+
+  const candles = await getKlines(symbol, interval, limit);
+  const now = Date.now();
+
+  return candles
+    .map((item) => ({
+      ...item,
+      isClosed: item.closeTime < now && Number(item.close) > 0,
+    }))
+    .filter((item) => item.isClosed);
 }
 
-// Раньше тут был отбор USDT perpetual futures.
-// Теперь делаем ближайший безопасный вариант:
-// берём топ USDT spot-пар по quoteVolume.
-async function getTopUsdtPerpetualSymbolsByVolume(limit = 50) {
-  const [exchangeInfoRes, ticker24hRes] = await Promise.all([
-    axios.get(`${BASE_URL}/api/v3/exchangeInfo`, { timeout: 15000 }),
-    axios.get(`${BASE_URL}/api/v3/ticker/24hr`, { timeout: 15000 }),
-  ]);
+async function getOpenInterest(symbol) {
+  const response = await axios.get(`${BASE_URL}/fapi/v1/openInterest`, {
+    params: { symbol },
+    timeout: 15000,
+  });
 
-  const activeUsdtSet = new Set(
-    exchangeInfoRes.data.symbols
-      .filter((s) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
-      .map((s) => s.symbol)
-  );
+  return Number(response.data.openInterest);
+}
 
-  const sorted = ticker24hRes.data
-    .filter((t) => activeUsdtSet.has(t.symbol))
-    .map((t) => ({
-      symbol: t.symbol,
-      quoteVolume: Number(t.quoteVolume),
-    }))
-    .sort((a, b) => b.quoteVolume - a.quoteVolume)
-    .slice(0, limit);
+async function getPremiumIndex(symbol) {
+  const response = await axios.get(`${BASE_URL}/fapi/v1/premiumIndex`, {
+    params: { symbol },
+    timeout: 15000,
+  });
 
-  return sorted.map((item) => item.symbol);
+  return response.data;
+}
+
+async function getFundingRate(symbol) {
+  const premiumIndex = await getPremiumIndex(symbol);
+  return Number(premiumIndex.lastFundingRate);
+}
+
+async function getMarkPrice(symbol) {
+  const premiumIndex = await getPremiumIndex(symbol);
+  return Number(premiumIndex.markPrice);
 }
 
 module.exports = {
-  getFuturesKlines,
-  getTopUsdtPerpetualSymbolsByVolume,
+  getTopUsdtSymbolsByVolume,
+  getKlines,
+  getClosedKlines,
+  isSymbolTrading,
+  getOpenInterest,
+  getFundingRate,
+  getMarkPrice,
 };

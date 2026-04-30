@@ -1,2 +1,9 @@
 node_modules
 .env
+.env.*
+logs
+dist
+coverage
+*.log
+data/
+summary/
