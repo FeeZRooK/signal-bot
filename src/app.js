@@ -1146,10 +1146,15 @@ async function start() {
   startHealthServer();
   healthServerState.botStarted = true;
 
+  const liquidityTelegramConfig = getLiquidityTelegramConfig();
+
   console.log('[bot] Binance signal bot started');
   console.log(`[telegram] bot token configured: ${env.telegramBotToken ? 'yes' : 'no'}`);
   console.log(`[telegram] chat id: ${env.telegramChatId || 'not set'}`);
   console.log(`[telegram] chat ids: ${getTelegramChatIds().join(', ')}`);
+  console.log(`[liquidity-telegram] bot token configured: ${env.liquidityTelegramBotToken ? 'yes' : 'no'}`);
+  console.log(`[liquidity-telegram] chat ids: ${liquidityTelegramConfig.chatIds.join(', ')}`);
+  console.log('[liquidity-telegram] mode: liquidity-only notifications');
 
   setInterval(() => {
     cleanupExpiredDivergenceSignals();
